@@ -3,14 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
-	"github.com/dustin/go-humanize"
-	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"os"
 	"path"
 	"strings"
+
+	"github.com/dustin/go-humanize"
+	"github.com/sirupsen/logrus"
 )
 
 const BlockSizeChunk = 512
@@ -30,8 +32,8 @@ type Descriptor struct {
 	// it seems to be infact a 128-bit structure, as
 	// those data records sharing the first sig have the
 	// 2nd sig also equal.
-	Signature [2]uint64
-	Data      [2]uint64 // unknown
+	Signature [16]byte // unknown for what
+	Hash      [16]byte // hash?
 }
 
 type UpdateFile struct {
@@ -48,7 +50,7 @@ type File struct {
 }
 
 func main() {
-	filePath := "/home/fionera/Projects/X32/X32_Firmware_3.11/dcp_corefs_3.11.update"
+	filePath := "/home/fionera/Projects/X32/firmware/Updates/X32_Firmware_1.03/dcp_corefs_1.03.update"
 
 	updateFile, err := LoadUpdateFile(filePath)
 	if err != nil {
@@ -56,7 +58,6 @@ func main() {
 	}
 
 	logrus.Infof("Loaded File `%s`", string(updateFile.FileDescriptor.FileName[:]))
-
 
 	logrus.Infof("Saving to FS")
 	err = updateFile.saveToFs()
@@ -106,7 +107,7 @@ func LoadUpdateFile(path string) (updateFile *UpdateFile, err error) {
 
 func (u *UpdateFile) saveToFs() (err error) {
 	for _, file := range u.Files {
-		fileData := u.rawData[file.StartOff:file.StartOff + file.ChunkSize]
+		fileData := u.rawData[file.StartOff : file.StartOff+file.ChunkSize]
 		if len(fileData) != int(file.ChunkSize) {
 			logrus.Infof("ChunkSize %d - FileDataSize %d", file.ChunkSize, len(fileData))
 			return errors.New("wrong fileSize")
@@ -123,8 +124,7 @@ func (u *UpdateFile) saveToFs() (err error) {
 			return err
 		}
 
-
-		err = ioutil.WriteFile(path.Join(folderPath, strings.Trim(fileName,"\x00")), fileData, 0755)
+		err = ioutil.WriteFile(path.Join(folderPath, strings.Trim(fileName, "\x00")), fileData, 0755)
 		if err != nil {
 			return err
 		}
@@ -146,6 +146,8 @@ func loadFileDescriptor(reader io.Reader) (descriptor *Descriptor, err error) {
 
 	logrus.Debugf("Filename is `%s`", string(descriptor.FileName[:]))
 	logrus.Debugf("Filesize is `%d`", descriptor.FileSize)
+	logrus.Info(hex.EncodeToString(descriptor.Signature[:]))
+	logrus.Info(hex.EncodeToString(descriptor.Hash[:]))
 
 	return descriptor, nil
 }
@@ -163,6 +165,7 @@ func (u *UpdateFile) loadFileList(reader io.Reader) (fileList []*File, err error
 		}
 
 		file := File{descriptor, 0, 0}
+
 		file.ChunkSize = ((file.FileSize + BlockSizeChunk - 1) / BlockSizeChunk) * BlockSizeChunk
 		file.StartOff = sizeChunk + u.DataStart
 
@@ -174,11 +177,12 @@ func (u *UpdateFile) loadFileList(reader io.Reader) (fileList []*File, err error
 			humanize.Bytes(uint64(file.FileSize)),
 			file.StartOff,
 		)
+		//logrus.Infof("%s - %s - %d", hex.EncodeToString(descriptor.Hash[:]), string(file.FileName[:]),uint64(file.FileSize) )
 
 		fileList[i] = &file
 	}
 
-	//logrus.Info(u.FileDescriptor.FileSize*BlockSizeChunk)
+	logrus.Info(u.FileDescriptor.FileSize * BlockSizeChunk)
 	//logrus.Info(sizeChunk+u.DataStart)
 	if u.FileDescriptor.FileSize*BlockSizeChunk != sizeChunk+u.DataStart {
 		logrus.Info("invalid Filesize")
